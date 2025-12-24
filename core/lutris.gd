@@ -1,33 +1,36 @@
 extends Resource
 
-var logger := Log.get_logger("Lutris", Log.LEVEL.DEBUG)
-var thread_pool := load("res://core/systems/threading/thread_pool.tres") as ThreadPool
-
-
-func _init() -> void:
-	thread_pool.start()
+var _lutris_command := ""
+var _lutris_base_args := [] as Array[String]
+var logger := Log.get_logger("Lutris", Log.LEVEL.INFO)
 
 
 ## Returns the command string to run Lutris
-func get_lutris_command() -> LutrisCmd:
+func get_lutris_command() -> Command:
+	if not _lutris_command.is_empty():
+		return Command.create(_lutris_command, _lutris_base_args)
 	if await _valid_lutris_cmd("lutris", []):
-		return LutrisCmd.new("lutris")
-	if await _valid_lutris_cmd("flatpak", ["run", "net.lutris.Lutris"]):
-		return LutrisCmd.new("flatpak", ["run", "net.lutris.Lutris"])
+		logger.info("Detected flatpak installation of Lutris")
+		_lutris_command = "lutris"
+		_lutris_base_args = []
+	elif await _valid_lutris_cmd("flatpak", ["run", "net.lutris.Lutris"]):
+		logger.info("Detected flatpak installation of Lutris")
+		_lutris_command = "flatpak"
+		_lutris_base_args = ["run", "net.lutris.Lutris"]
 
-	return LutrisCmd.new("lutris")
+	return Command.create(_lutris_command, _lutris_base_args)
 
 
 ## Returns a list of locally install Lutris games
 func get_games() -> Array[LutrisApp]:
 	var games: Array[LutrisApp] = []
-	var out := await _exec(["--list-games", "-j"]) as CmdOutput
+	var out := await _exec(["--list-games", "-j"]) as Command
 	if out.code != OK:
-		logger.warn("Unable to list lutris games. Exited with code " + str(out.code) + ": " + out.output)
+		logger.warn("Unable to list lutris games. Exited with code " + str(out.code) + ": " + out.stdout + " " + out.stderr)
 		return games
 
 	# Try to parse the JSON output
-	var parsed = JSON.parse_string(out.output)
+	var parsed = JSON.parse_string(out.stdout)
 	if not parsed is Array:
 		logger.warn("Unable to parse lutris games output")
 		return games
@@ -65,54 +68,31 @@ func get_games() -> Array[LutrisApp]:
 
 
 ## Executes the lutris command with the given arguments
-func _exec(args: PackedStringArray) -> CmdOutput:
+func _exec(args: PackedStringArray) -> Command:
 	var lutris_cmd := await get_lutris_command()
-	var cmd := lutris_cmd.cmd
-	var arguments := lutris_cmd.args.duplicate()
-	arguments.append_array(args)
-	return await _exec_cmd(cmd, arguments)
+	for arg in args:
+		lutris_cmd.args.push_back(arg)
+	return await _exec_cmd(lutris_cmd)
 
 
 ## Execute the given command and return its output
-func _exec_cmd(cmd: String, args: PackedStringArray) -> CmdOutput:
-	logger.debug("Executing command: " + cmd + " " + " ".join(args))
-	var output := []
-	var code := await thread_pool.exec(OS.execute.bind(cmd, args, output)) as int
-	var cmd_out := CmdOutput.new()
-	cmd_out.code = code
-	cmd_out.output = output[0]
-	logger.debug("Command exit code: " + str(code))
-	logger.debug("Command output: " + output[0])
-
-	return cmd_out
+func _exec_cmd(cmd: Command) -> void:
+	logger.debug("Executing command: " + cmd.command + " " + " ".join(cmd.args))
+	cmd.execute()
+	await cmd.finished
+	logger.debug("Command exit code: " + str(cmd.code))
+	logger.debug("Command output: " + cmd.stdout + " " + cmd.stderr)
 
 
 ## Tries to execute the given Lutris command to see if it exists. This will
 ## append the '--version' argument to the given command to see if it
 ## executes successfully, indiciating that this command will work.
 func _valid_lutris_cmd(cmd: String, args: PackedStringArray) -> bool:
-	var cmd_args := args.duplicate()
-	cmd_args.push_back("--version")
-	var cmd_output := await _exec_cmd(cmd, cmd_args)
-	logger.debug("Executing command: " + cmd + " " + " ".join(cmd_args))
+	var command := Command.create(cmd, args)
+	command.args.push_back("--version")
+	await _exec_cmd(command)
 
-	return cmd_output.code == 0
-
-
-## Structure that defines a lutris command
-class LutrisCmd extends RefCounted:
-	var cmd: String
-	var args: PackedStringArray
-
-	func _init(command: String, arguments: PackedStringArray = []) -> void:
-		self.cmd = command
-		self.args = arguments
-
-
-## Output of a lutris command
-class CmdOutput extends RefCounted:
-	var code: int
-	var output: String
+	return command.code == 0
 
 
 ## A lutris game entry

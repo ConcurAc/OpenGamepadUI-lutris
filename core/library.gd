@@ -13,7 +13,7 @@ func get_library_launch_items() -> Array[LibraryLaunchItem]:
 	var games := await lutris.get_games()
 	# Get the lutris command to use
 	var lutris_cmd := await lutris.get_lutris_command()
-	var cmd := lutris_cmd.cmd
+	var cmd := lutris_cmd.command
 	var args := lutris_cmd.args
 	# Create a launch item for each lutris game
 	for game in games:
