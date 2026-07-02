@@ -1,6 +1,6 @@
 extends Resource
 
-var _lutris_command := ""
+var _lutris_command := "lutris"
 var _lutris_base_args := [] as Array[String]
 var logger := Log.get_logger("Lutris", Log.LEVEL.INFO)
 
